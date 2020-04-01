@@ -33,6 +33,24 @@ def wrist_forward_kinematics(base_m, lift_m, arm_m):
     return position_xyz
 
 
+def get_robot_joint_state(robot):
+    lift_height_m = robot.lift.status['pos']
+    arm_extension_m = robot.arm.status['pos']
+    wrist_yaw_rad = robot.end_of_arm.motors['wrist_yaw'].status['pos']
+    base_x = 100.0 * robot.base.status['x']
+    base_y = 100.0 * robot.base.status['y']
+    base_theta = robot.base.status['theta']
+    wrist_yaw_rad = robot.end_of_arm.motors['wrist_yaw'].status['pos']
+
+    joint_state = {'lift_height_m':lift_height_m,
+                    'arm_extension_m': arm_extension_m,
+                    'wrist_yaw_rad': wrist_yaw_rad,
+                    'base_x': base_x,
+                    'base_y': base_y,
+                    'base_theta': base_theta,
+                    'wrist_yaw_rad': wrist_yaw_rad}
+    return joint_state
+
 def main():
     robot = rb.Robot()
     robot.startup()
@@ -44,12 +62,9 @@ def main():
         return
 
     time.sleep(1.0)
-    lift_height_m = robot.lift.status['pos']
-    arm_extension_m = robot.arm.status['pos']
-    wrist_yaw_rad = robot.end_of_arm.motors['wrist_yaw'].status['pos']
-    print('lift_height_m =', lift_height_m)
-    print('arm_extension_m =', arm_extension_m)
-    print('wrist_yaw_rad =', wrist_yaw_rad)
+
+    joint_state = get_robot_joint_state(robot)
+    print('start joint_state =', joint_state)
 
     base_m = 0.1
     lift_m = 0.3
@@ -57,7 +72,7 @@ def main():
     wrist_position_xyz = wrist_forward_kinematics(base_m, lift_m, arm_m)
     print('wrist_position_xyz =', wrist_position_xyz)
     
-    d_m = 0.005
+    d_m = 0.1
     robot.base.translate_by(d_m)
     #d_rad = deg_to_rad(10.0)
     #robot.base.rotate_by(d_rad)
@@ -74,7 +89,11 @@ def main():
     robot.end_of_arm.move_by('stretch_gripper', gripper_percent)
     robot.push_command()
     
-    time.sleep(1.0)
+    time.sleep(2.0)
+
+    joint_state = get_robot_joint_state(robot)
+    print('end joint_state =', joint_state)
+    
     robot.stop()
 
 if __name__ == "__main__":
