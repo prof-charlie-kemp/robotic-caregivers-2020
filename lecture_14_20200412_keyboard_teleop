@@ -1,0 +1,203 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import keyboard as kb
+
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+
+import rospy
+import actionlib
+from control_msgs.msg import FollowJointTrajectoryAction
+from control_msgs.msg import FollowJointTrajectoryGoal
+from trajectory_msgs.msg import JointTrajectoryPoint
+
+from sensor_msgs.msg import PointCloud2
+
+from control_msgs.msg import GripperCommandAction
+from control_msgs.msg import GripperCommandGoal
+
+from std_srvs.srv import Trigger, TriggerRequest
+
+import math
+import time
+import threading
+import sys
+
+import tf2_ros
+
+import hello_helpers.hello_misc as hm
+
+import argparse as ap
+
+
+class GetKeyboardCommands:
+
+    def __init__(self):
+        self.step_size = 'medium'
+        self.persistent_command_count = 0
+        self.prev_persistent_c = None
+        self.persistent_start_s = time.time()
+        self.max_persistent_delay_s = 1.0
+        self.rad_per_deg = math.pi/180.0
+        self.small_deg = 3.0
+        self.small_rad = self.rad_per_deg * self.small_deg
+        self.small_translate = 0.005  #0.02
+        self.medium_deg = 6.0
+        self.medium_rad = self.rad_per_deg * self.medium_deg
+        self.medium_translate = 0.04
+        self.big_deg = 12.0
+        self.big_rad = self.rad_per_deg * self.big_deg
+        self.big_translate = 0.06
+        self.mode = 'position' #'manipulation' #'navigation'
+
+    def get_deltas(self):
+        if self.step_size == 'small':
+            deltas = {'rad': self.small_rad, 'translate': self.small_translate}
+        if self.step_size == 'medium':
+            deltas = {'rad': self.medium_rad, 'translate': self.medium_translate} 
+        if self.step_size == 'big':
+            deltas = {'rad': self.big_rad, 'translate': self.big_translate} 
+        return deltas
+        
+    def get_command(self, node):
+        command = None
+        
+        c = kb.getch()
+            
+        # 8 or up arrow
+        if c == '8' or c == '\x1b[A':
+            command = {'joint': 'joint_lift', 'delta': self.get_deltas()['translate']}
+        # 2 or down arrow
+        if c == '2' or c == '\x1b[B':
+            command = {'joint': 'joint_lift', 'delta': -self.get_deltas()['translate']}
+        if self.mode == 'manipulation':
+            # 4 or left arrow
+            if c == '4' or c == '\x1b[D':
+                command = {'joint': 'joint_mobile_base_translation', 'delta': self.get_deltas()['translate']}
+            # 6 or right arrow
+            if c == '6' or c == '\x1b[C':
+                command = {'joint': 'joint_mobile_base_translation', 'delta': -self.get_deltas()['translate']}
+        elif self.mode == 'position':
+            # 4 or left arrow
+            if c == '4' or c == '\x1b[D':
+                command = {'joint': 'translate_mobile_base', 'inc': self.get_deltas()['translate']}
+            # 6 or right arrow
+            if c == '6' or c == '\x1b[C':
+                command = {'joint': 'translate_mobile_base', 'inc': -self.get_deltas()['translate']}
+            # 1 or end key 
+            if c == '7' or c == '\x1b[H':
+                command = {'joint': 'rotate_mobile_base', 'inc': self.get_deltas()['rad']}
+            # 3 or pg down 5~
+            if c == '9' or c == '\x1b[5':
+                command = {'joint': 'rotate_mobile_base', 'inc': -self.get_deltas()['rad']}
+        elif self.mode == 'navigation':
+            rospy.loginfo('ERROR: Navigation mode is not currently supported.')
+            
+        if c == 'w' or c == 'W':
+            command = {'joint': 'wrist_extension', 'delta': self.get_deltas()['translate']}
+        if c == 'x' or c == 'X':
+            command = {'joint': 'wrist_extension', 'delta': -self.get_deltas()['translate']}
+        if c == 'd' or c == 'D':
+            command = {'joint': 'joint_wrist_yaw', 'delta': -self.get_deltas()['rad']}
+        if c == 'a' or c == 'A':
+            command = {'joint': 'joint_wrist_yaw', 'delta': self.get_deltas()['rad']}
+        if c == '5' or c == '\x1b[E' or c == 'g' or c == 'G':
+            # grasp
+            command = {'joint': 'joint_gripper_finger_left', 'delta': -self.get_deltas()['rad']}
+        if c == '0' or c == '\x1b[2' or c == 'r' or c == 'R':
+            # release
+            command = {'joint': 'joint_gripper_finger_left', 'delta': self.get_deltas()['rad']}
+        if c == 'i' or c == 'I':
+            command = {'joint': 'joint_head_tilt', 'delta': (2.0 * self.get_deltas()['rad'])}
+        if c == ',' or c == '<':
+            command = {'joint': 'joint_head_tilt', 'delta': -(2.0 * self.get_deltas()['rad'])}
+        if c == 'j' or c == 'J':
+            command = {'joint': 'joint_head_pan', 'delta': (2.0 * self.get_deltas()['rad'])}
+        if c == 'l' or c == 'L':
+            command = {'joint': 'joint_head_pan', 'delta': -(2.0 * self.get_deltas()['rad'])}
+        if c == 'b' or c == 'B':
+            rospy.loginfo('process_keyboard.py: changing to BIG step size')
+            self.step_size = 'big'
+        if c == 'm' or c == 'M':
+            rospy.loginfo('process_keyboard.py: changing to MEDIUM step size')
+            self.step_size = 'medium'
+        if c == 's' or c == 'S':
+            rospy.loginfo('process_keyboard.py: changing to SMALL step size')
+            self.step_size = 'small'
+        if c == 'q' or c == 'Q':
+            rospy.loginfo('keyboard_teleop exiting...')
+            rospy.signal_shutdown('Received quit character (q), so exiting')
+            sys.exit()
+
+        return command
+        
+
+class KeyboardTeleopNode(hm.HelloNode):
+
+    def __init__(self):
+        hm.HelloNode.__init__(self)
+        self.keys = GetKeyboardCommands()
+        self.rate = 10.0
+        self.joint_state = None
+        
+    def joint_states_callback(self, joint_state):
+        self.joint_state = joint_state
+
+    def send_command(self, command):
+        joint_state = self.joint_state
+        if (joint_state is not None) and (command is not None):
+            joint_name = command['joint']
+            self.trajectory_goal.trajectory.joint_names = [joint_name]
+            if 'inc' in command:
+                inc = command['inc']
+                rospy.loginfo('inc = {0}'.format(inc))
+                new_value = inc
+            elif 'delta' in command:
+                joint_index = joint_state.name.index(joint_name)
+                joint_value = joint_state.position[joint_index]
+                delta = command['delta']
+                rospy.loginfo('delta = {0}, joint_index = {1}, joint_value = {2}'.format(delta, joint_index, joint_value))
+                new_value = joint_value + delta
+            self.point.positions = [new_value]
+            self.trajectory_goal.trajectory.points = [self.point]
+            self.trajectory_goal.trajectory.header.stamp = rospy.Time.now()
+            rospy.loginfo('joint_name = {0}, self.trajectory_goal = {1}'.format(joint_name, self.trajectory_goal))
+            self.trajectory_client.send_goal(self.trajectory_goal)
+            rospy.loginfo('Done sending pose.')
+            wait_for_response = False
+            if wait_for_response:
+                # Send commands synchronously. Wait for the prior
+                # command to finish before allowing a new command to
+                # be sent.
+                self.trajectory_client.wait_for_result()
+                rospy.loginfo('Received the following result:')
+                rospy.loginfo(self.trajectory_client.get_result())
+
+        
+    def main(self):
+        hm.HelloNode.main(self, 'keyboard_teleop', 'keyboard_teleop', wait_for_first_pointcloud=True)
+            
+        rospy.Subscriber('/stretch/joint_states', JointState, self.joint_states_callback)
+        
+        rate = rospy.Rate(self.rate)
+
+        while not rospy.is_shutdown():
+            command = self.keys.get_command(self)
+            rospy.loginfo(command)
+            self.send_command(command)
+            rate.sleep()
+
+        
+if __name__ == '__main__':
+    try:
+        parser = ap.ArgumentParser(description='Keyboard teleoperation for stretch.')
+        args, unknown = parser.parse_known_args()
+        
+        node = KeyboardTeleopNode()
+        node.main()
+    except KeyboardInterrupt:
+        rospy.loginfo('interrupt received, so shutting down')
+
